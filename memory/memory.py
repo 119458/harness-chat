@@ -1,0 +1,287 @@
+import json
+import os
+import re
+import time
+from pathlib import Path
+from anthropic import Anthropic
+
+from subagent.sub_agent import extract_text
+
+WORKDIR = Path(os.getenv("WORKDIR"))
+MEMORY_DIR = WORKDIR / ".memory_store"
+MEMORY_DIR.mkdir(exist_ok=True)
+MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
+CONSOLIDATE_THRESHOLD = 10
+
+client = Anthropic(
+    api_key=os.getenv("API_KEY"),
+    base_url=os.getenv("BASE_URL")
+)
+MODEL = os.getenv("MODEL")
+
+MEMORY_TYPES = ["user", "feedback", "project", "reference"]
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    if not text.startswith("---"):
+        return {}, text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}, text
+
+    meta = {}
+    for line in parts[1].strip().splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            meta[k.strip()] = v.strip().strip('"').strip("'")
+    return meta, parts[2].strip()
+
+def write_memory_file(name: str, mem_type: str, description: str, body: str):
+
+    slug = name.lower().replace(" ", "-").replace("/", "-")
+    filename = f"{slug}.md"
+    filepath = MEMORY_DIR / filename
+    filepath.write_text(
+        f"---\nname: {name}\ndescription: {description}\ntype: {mem_type}\n---\n\n{body}\n"
+    )
+    _rebuild_index()
+    return filepath
+
+def _rebuild_index():
+    lines = []
+    for f in sorted(MEMORY_DIR.glob("*.md")):
+        if f.name == "MEMORY.md":
+            continue
+        raw = f.read_text()
+        meta, body = _parse_frontmatter(raw)
+        name = meta.get('name', f.stem)
+        desc = meta.get("description", body.split("\n")[0][:80])
+        lines.append(f"- [{name}]({f.name}) - {desc}")
+
+    MEMORY_INDEX.write_text("\n".join(lines) + "\n" if lines else "")
+
+def read_memory_index() -> str:
+
+    if not MEMORY_INDEX.exists():
+        return ""
+    text = MEMORY_INDEX.read_text().strip()
+    return text if text else ""
+
+def read_memory_file(filename: str) -> str | None:
+
+    path = MEMORY_DIR / filename
+    if not path.exists():
+        return None
+    return path.read_text().strip()
+
+def list_memory_files() -> list[dict]:
+
+    result = []
+    for f in sorted(MEMORY_DIR.glob("*.md")):
+        if f.name == "MEMORY.md":
+            continue
+        raw = f.read_text()
+        meta, body = _parse_frontmatter(raw)
+        result.append({
+            "filename": f.name,
+            "name": meta.get("name", f.stem),
+            "description": meta.get("description", ""),
+            "type": meta.get("type", "user"),
+            "body": body
+        })
+    return result
+
+def select_relevant_memories(messages: list, max_items: int = 5) -> list[str]:
+
+    files = list_memory_files()
+    if not files:
+        return []
+
+    recent_texts = []
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    str(getattr(b, "text", "")) for b in content
+                    if getattr(b, "type", None) == "text"
+                )
+            if isinstance(content, str):
+                recent_texts.append(content)
+            if len(recent_texts) >= 3:
+                break
+
+    recent = " ".join(reversed(recent_texts))[:2000]
+
+    if not recent.strip():
+        return []
+
+    catalog_lines = []
+    for i, f in enumerate(files):
+        catalog_lines.append(f"{i}: {f['name']} - {f['description']}")
+    catalog = "\n".join(catalog_lines)
+    prompt = f"""
+结合下方最新对话内容与记忆清单，筛选出和当前内容明显相关的记忆条目编号。
+仅返回纯JSON格式的整数数组，示例：[0, 3]。
+若无任何相关记忆，直接返回空数组[]。
+
+最新对话内容：
+{recent}
+
+记忆清单：
+{catalog}
+"""
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        text = extract_text(response.content).strip()
+        match = re.search(r"\[.*?\]", text, re.DOTALL)
+
+        if match:
+            indices = json.loads(match.group())
+            selected = []
+            for idx in indices:
+                if isinstance(idx, int) and 0 <= idx < len(files):
+                    selected.append(files[idx]["filename"])
+                    if len(selected) >= max_items:
+                        break
+            return selected
+    except Exception:
+        pass
+
+    keywords = [w.lower() for w in recent.split() if len(w) > 3]
+    selected = []
+    for f in files:
+        text = (f["name"] + " " + f["description"]).lower()
+        if any(kw in text for kw in keywords):
+            selected.append(f["filename"])
+            if len(selected) >= max_items:
+                break
+    return selected
+
+def load_memories(messages: list) -> str:
+
+    selected_files = select_relevant_memories(messages)
+    if not selected_files:
+        return ""
+
+    parts = ["<relevant_memories>"]
+    for filename in selected_files:
+        content = read_memory_file(filename)
+        if content:
+            parts.append(content)
+    parts.append("</relevant_memories>")
+    return "\n\n".join(parts)
+
+def extract_memories(messages: list):
+
+    dialogue_parts = []
+    for msg in messages[-10:]:
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                str(getattr(b, "text", "")) for b in content
+                if getattr(b, "type", None) == "text"
+            )
+        if isinstance(content, str) and content.strip():
+            dialogue_parts.append(f"{role}: {content}")
+    dialogue = "\n".join(dialogue_parts)
+
+    if not dialogue.strip():
+        return
+    existing = list_memory_files()
+    existing_desc = "\n".join(f"- {m['name']}: {m['description']}" for m in existing) if existing else "(none)"
+    prompt = (
+        "从本段对话中提取用户偏好、使用限制条件或是项目相关事实信息。\n"
+        "仅返回JSON数组，数组内每条数据必须包含四个字段：name、type、description、body。\n"
+        "字段规范：\n"
+        "- name：简短短横线命名标识（例：user-preference-tabs）\n"
+        "- type：只能从以下四类里任选其一：\n"
+        "  user = 用户个人偏好，feedback = 指令与修改要求，project = 项目既定信息，reference = 外部参考资料\n"
+        "- description：单行精简摘要，用于后续检索索引\n"
+        "- body：使用Markdown格式记录完整详细内容\n"
+        "如果没有新增有效信息，或是内容已经存在于已有记忆中，直接返回空数组[]。\n\n"
+        f"已有记忆内容：\n{existing_desc}\n\n"
+        f"对话原文（截取前4000字符）：\n{dialogue[:4000]}"
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800
+        )
+        text = extract_text(response.content).strip()
+        match = re.search(r'\[.*?\]', text, re.DOTALL)
+        if not match:
+            return
+        items = json.loads(match.group())
+        if not items:
+            return
+        count = 0
+        for mem in items:
+            name = mem.get("name", f"memory_{int(time.time())}")
+            mem_type = mem.get("type", "user")
+            desc = mem.get("description", "")
+            body = mem.get("body", "")
+            if desc and body:
+                write_memory_file(name, mem_type, desc, body)
+                count += 1
+        if count:
+            print(f"\n\033[33m[存储{count}条记忆]\033[0m")
+    except Exception as e:
+        print(e)
+        pass
+
+def consolidate_memories():
+    files = list_memory_files()
+    if len(files) < CONSOLIDATE_THRESHOLD:
+        return
+
+    catalog = "\n\n".join(
+        f"## {f['filename']}\nname: {f['name']}\ndescription: {f['description']}\n{f['body']}"
+        for f in files
+    )
+
+    prompt = (
+        "对下方所有记忆条目进行整合梳理，遵循以下规则：\n"
+        "1. 合并重复内容，多条同类重复记忆精简为单条\n"
+        "2. 删除已过时、与其他记忆互相矛盾的无效记忆\n"
+        "3. 最终留存的记忆总数不得超过30条\n"
+        "4. 优先级最高：务必完整保留用户重要偏好信息\n"
+        "仅返回JSON数组，数组内每条数据结构固定为：{name, type, description, body}\n\n"
+        f"待整合记忆:\n{catalog}\n"
+    )
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=3000
+        )
+        text = extract_text(response.content).strip()
+        match = re.search(r'\[.*?\]', text, re.DOTALL)
+        if not match:
+            return
+        items = json.loads(match.group())
+        if not items:
+            return
+        for f in MEMORY_DIR.glob("*.md"):
+            if f.name != "MEMORY.md":
+                f.unlink()
+
+        for mem in items:
+            name = mem.get("name", f"memory_{int(time.time())}")
+            mem_type = mem.get("type", "user")
+            desc = mem.get("description", "")
+            body = mem.get("body", "")
+            if desc and body:
+                write_memory_file(name, mem_type, desc, body)
+
+        print(f"\n\033[33m[记忆: 合并{len(files)} → {len(items)}条记忆]\033[0m")
+    except Exception:
+        pass
+
+
