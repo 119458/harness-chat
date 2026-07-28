@@ -1,3 +1,5 @@
+from typing import Callable
+
 from anthropic import Anthropic
 
 from background_tasks.background_run import should_run_background, start_background_task, execute_tool, \
@@ -20,7 +22,7 @@ client = Anthropic(
 reactive_retries = 0
 MAX_REACTIVE_RETRIES = 1
 
-def agent_loop(messages: list):
+def agent_loop(messages: list, on_event: Callable[[dict], None] = None):
     tools, handlers = assemble_tool_pool()
     system_prompt = get_system_prompt()
     state = RecoveryState()
@@ -28,6 +30,22 @@ def agent_loop(messages: list):
     global reactive_retries
     memories_content = load_memories(messages)
     memory_turn = len(messages) -1 if messages and isinstance(messages[-1].get("content"), str) else None
+
+    def _emit(event: dict) -> None:
+        """Forward a streaming event to the optional hook (no-op when absent).
+
+        Additive streaming surface (constitution v1.1.0 Principle II named
+        exception). The bridge's callback may raise ``StopRequested`` (a
+        ``BaseException``) to cooperatively stop the turn at a safe boundary
+        (between deltas / between tool dispatches, never mid-``execute_tool``).
+        """
+        if on_event is not None:
+            on_event(event)
+
+    def _preview(value) -> str:
+        """Truncate a tool result to a 2k-char preview for SSE (contracts)."""
+        s = value if isinstance(value, str) else str(value)
+        return s[:2000]
 
     while True:
         pre_compress = [
@@ -43,17 +61,38 @@ def agent_loop(messages: list):
                     **messages[memory_turn],
                     "content": memories_content + "\n\n" + messages[memory_turn]["content"]
                 }
-            response = with_retry(
-                lambda mt=max_tokens, model=state.current_model:
-                client.messages.create(
+            # Streaming swap (constitution v1.1.0 Principle II named exception):
+            # ``client.messages.create`` -> ``client.messages.stream`` so
+            # ``on_event`` can emit incremental thinking/text deltas (R1, R7).
+            # ``with_retry`` wraps stream *entry* (the ``__enter__`` HTTP
+            # request) so 429/529 + 529-fallback still apply at the same flow
+            # point; mid-stream failures are NOT retried (a partial stream
+            # cannot be resumed) and propagate to the existing ``except`` (R1).
+            def _open_stream(mt=max_tokens, model=state.current_model):
+                cm = client.messages.stream(
                     model=model,
                     system=system_prompt,
                     messages=request_messages,
                     tools=tools,
-                    max_tokens=mt
-                ),
-                state=state
-            )
+                    max_tokens=mt,
+                )
+                return cm.__enter__()  # performs the HTTP request -> 429/529 surface here
+            stream = with_retry(_open_stream, state=state)
+            try:
+                for event in stream:
+                    # Forward each content delta immediately, no buffering (R7).
+                    if getattr(event, "type", None) == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dt = getattr(delta, "type", None)
+                        if dt == "thinking_delta":
+                            _emit({"type": "thinking_delta", "content": getattr(delta, "thinking", "")})
+                        elif dt == "text_delta":
+                            _emit({"type": "text_delta", "content": getattr(delta, "text", "")})
+                # Full Message post-drain; downstream max_tokens/tool_use logic
+                # is unchanged (R4).
+                response = stream.get_final_message()
+            finally:
+                stream.__exit__(None, None, None)
             reactive_retries = 0
         except Exception as e:
             if is_prompt_too_long_error(e):
@@ -110,11 +149,14 @@ def agent_loop(messages: list):
             if force:
                 messages.append({"role": "user", "content": force})
                 continue
+            _emit({"type": "done"})
             return
         results = []
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            tool_input = block.input if isinstance(block.input, dict) else {}
+            _emit({"type": "tool_call_start", "tool": block.name, "input": tool_input})
             if block.name == "compact":
                 messages[:] = compact_history(messages)
                 results.append({
@@ -122,6 +164,8 @@ def agent_loop(messages: list):
                     "tool_use_id": block.id,
                     "content": "[已对历史对话进行压缩总结]"
                 })
+                _emit({"type": "tool_call_result", "tool": block.name,
+                       "result": "[已对历史对话进行压缩总结]"})
                 messages.append({"role": "user", "content": results})
                 break
             blocked = trigger_hooks("PreToolUse", block)
@@ -131,6 +175,8 @@ def agent_loop(messages: list):
                     "tool_use_id": block.id,
                     "content": str(blocked)
                 })
+                _emit({"type": "tool_call_result", "tool": block.name,
+                       "result": _preview(blocked)})
                 continue
             print(f"\033[36m> {block.name}\033[0m")
             if should_run_background(block.name, block.input):
@@ -142,6 +188,8 @@ def agent_loop(messages: list):
 指令：{block.input.get('command', '')}。
 任务完成后即可查看执行结果。"""
                 })
+                _emit({"type": "tool_call_result", "tool": block.name,
+                       "result": f"[background task {bg_id} started]"})
             else:
                 output = execute_tool(block, handlers)
                 results.append({
@@ -149,6 +197,8 @@ def agent_loop(messages: list):
                     "tool_use_id": block.id,
                     "content": output
                 })
+                _emit({"type": "tool_call_result", "tool": block.name,
+                       "result": _preview(output)})
 
                 trigger_hooks("PostToolUse", block, output)
 

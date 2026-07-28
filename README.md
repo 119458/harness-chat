@@ -105,6 +105,15 @@ study_harness/
 ├── mcp_plugin/               # MCP（模拟）
 ├── skills/                   # 技能定义（SKILL.md）
 └── sandbox/                  # WORKDIR：智能体沙盒
+└── backend/                  # FastAPI：后端启动
+└── frontend/                 # 整体前端代码
+```
+
+## 程序启动
+```
+pip install fastapi uvicorn pydantic humanfriendly pyyaml
+python -m uvicorn backend.main:app --port 8000
+cd frontend && npm install && npm run dev
 ```
 
 ## 后续计划

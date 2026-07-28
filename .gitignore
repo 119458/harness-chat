@@ -21,7 +21,15 @@ __pycache__/
 hook.log
 sandbox/
 skills/
+specs/
+skills-lock.json
 CLAUDE.md
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
 
 # macOS
 .DS_Store
