@@ -25,7 +25,13 @@ export interface AnswerBlockData {
   content: string
 }
 
-export type Block = ThinkingBlockData | ToolBlockData | AnswerBlockData
+export interface ErrorBlockData {
+  block_id: string
+  kind: 'error'
+  content: string
+}
+
+export type Block = ThinkingBlockData | ToolBlockData | AnswerBlockData | ErrorBlockData
 
 export interface Turn {
   turn_id: string

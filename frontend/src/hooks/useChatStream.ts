@@ -15,7 +15,21 @@ function newTurn(message: string): Turn {
   return {
     turn_id: crypto.randomUUID(),
     user_message: message,
-    blocks: [],
+    // Open with an empty "thinking" placeholder so the assistant area shows
+    // immediate feedback (a breathing "思考中" capsule - see ThinkingBlock)
+    // the instant the user sends, instead of a frozen blank until the first
+    // thinking_delta. The first real delta either fills this same block in
+    // place (thinking_delta -> smooth transition, same React key, no remount)
+    // or replaces it (applyToCurrentTurn drops the empty placeholder before
+    // pushing a tool/answer block).
+    blocks: [
+      {
+        block_id: crypto.randomUUID(),
+        kind: 'thinking',
+        collapsed: false,
+        content: '',
+      },
+    ],
     status: 'streaming',
     started_at: Date.now(),
     ended_at: null,
@@ -55,7 +69,17 @@ export function useChatStream(): UseChatStream {
       if (prev.length === 0) return prev
       const last = prev[prev.length - 1]
       if (last.status !== 'streaming') return prev
-      const blocks = [...last.blocks]
+      let blocks = [...last.blocks]
+      // Drop the empty "思考中" thinking placeholder (see newTurn) the moment
+      // the first real delta is NOT a thinking_delta - otherwise it would sit
+      // empty beside an unrelated answer/tool block. A thinking_delta instead
+      // fills the placeholder in place (handled below) for a smooth transition.
+      if (ev.type !== 'thinking_delta') {
+        const tail = blocks[blocks.length - 1]
+        if (tail && tail.kind === 'thinking' && !tail.content) {
+          blocks = blocks.slice(0, -1)
+        }
+      }
       switch (ev.type) {
         case 'thinking_delta': {
           const tail = blocks[blocks.length - 1]
@@ -124,14 +148,15 @@ export function useChatStream(): UseChatStream {
           status: kind,
           ended_at: last.ended_at ?? Date.now(),
         }
-        if (kind === 'error' && message) {
-          // carry the error message as a final answer block so it is visible
+        if (kind === 'error') {
+          // carry the error message as a dedicated error block so it renders as
+          // a distinct error card (point 4), not bare answer text.
           finalized.blocks = [
             ...finalized.blocks,
             {
               block_id: crypto.randomUUID(),
-              kind: 'answer',
-              content: `[error] ${message}`,
+              kind: 'error',
+              content: message ?? 'Unknown error',
             },
           ]
         }

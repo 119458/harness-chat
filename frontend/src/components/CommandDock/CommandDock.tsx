@@ -5,7 +5,10 @@ import SendButton from './SendButton'
 
 // Floating glassmorphic command dock (T033). Owns its textarea state and
 // integrates the functional SendButton plus a dock-integrated StopButton that
-// replaces the temporary one. Top-row controls are STATIC placeholders
+// replaces the temporary one. The textarea sits on top; the control row sits
+// BELOW it inside the same card, separated by a hairline (point 5). Anchored to
+// <main> with an inner max-w-3xl column so it aligns with the message content
+// column (constitution Principle V, point 8). Controls are STATIC placeholders
 // (FR-019/020): clickable, hover-responsive, no functional effect, never error.
 export default function CommandDock({
   status,
@@ -39,15 +42,9 @@ export default function CommandDock({
   const sendDisabled = status === 'RUNNING' || text.trim() === ''
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-full max-w-3xl px-4 z-20">
-      <div className="bg-surface/80 backdrop-blur border border-white/5 rounded-xl shadow-2xl shadow-black/40 p-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <SandboxPathIndicator />
-          <ChatAgentToggle />
-          <ModelSelector />
-          <DeepThinkToggle />
-        </div>
-        <div className="mt-2 flex items-end gap-2">
+    <div className="absolute bottom-4 left-0 right-0 z-20 px-4">
+      <div className="mx-auto max-w-3xl rounded-xl border border-hairline bg-surface/80 px-4 py-2 shadow-2xl shadow-black/40 backdrop-blur">
+        <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             value={text}
@@ -59,20 +56,26 @@ export default function CommandDock({
               }
             }}
             placeholder="Send an instruction..."
-            rows={1}
-            className="slim-scrollbar flex-1 resize-none bg-transparent py-1 text-body text-zinc-200 placeholder:text-zinc-600 outline-none max-h-40"
+            rows={3}
+            className="slim-scrollbar max-h-40 flex-1 resize-none bg-transparent py-1 text-body text-fg placeholder:text-fg-faint outline-none"
           />
           {status === 'RUNNING' && (
             <button
               type="button"
               onClick={onStop}
               aria-label="Stop"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/5 bg-zinc-800/60 text-zinc-300 hover:bg-zinc-700/60"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-hairline bg-canvas/60 text-fg-subtle hover:bg-canvas hover:text-fg"
             >
               <Square size={14} strokeWidth={1.5} />
             </button>
           )}
           <SendButton onSend={send} disabled={sendDisabled} />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-hairline pt-2">
+          <SandboxPathIndicator />
+          <ChatAgentToggle />
+          <ModelSelector />
+          <DeepThinkToggle />
         </div>
       </div>
     </div>
@@ -86,7 +89,7 @@ function SandboxPathIndicator() {
     <button
       type="button"
       onClick={() => {}}
-      className="flex items-center gap-1 text-micro text-zinc-500 hover:text-zinc-300"
+      className="flex items-center gap-1 text-control text-fg-subtle hover:text-fg"
     >
       <Folder size={12} strokeWidth={1.5} />
       <span>sandbox/</span>
@@ -99,7 +102,7 @@ function ChatAgentToggle() {
     <button
       type="button"
       onClick={() => {}}
-      className="rounded bg-zinc-800/60 px-2 py-1 text-micro text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-200"
+      className="rounded bg-canvas/60 px-2 py-1 text-control text-fg-muted hover:bg-canvas hover:text-fg"
     >
       Chat
     </button>
@@ -111,7 +114,7 @@ function ModelSelector() {
     <button
       type="button"
       onClick={() => {}}
-      className="flex items-center gap-1 text-micro text-zinc-500 hover:text-zinc-300"
+      className="flex items-center gap-1 text-control text-fg-subtle hover:text-fg"
     >
       <Cpu size={12} strokeWidth={1.5} />
       <span>deepseek-v4-flash</span>
@@ -124,7 +127,7 @@ function DeepThinkToggle() {
     <button
       type="button"
       onClick={() => {}}
-      className="flex items-center gap-1 text-micro text-zinc-500 hover:text-zinc-300"
+      className="flex items-center gap-1 text-control text-fg-subtle hover:text-fg"
     >
       <Sparkles size={12} strokeWidth={1.5} />
       <span>Deep Think</span>

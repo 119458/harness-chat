@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Harness Chat</title>
+    <script>
+      // Theme bootstrap (constitution Principle V): default dark, persisted to
+      // localStorage under 'theme'. Runs before paint to avoid a flash of the
+      // wrong theme; useTheme keeps the class + storage in sync thereafter.
+      (function () {
+        try {
+          if (localStorage.getItem('theme') === 'light') {
+            document.documentElement.classList.remove('dark')
+          } else {
+            document.documentElement.classList.add('dark')
+          }
+        } catch (e) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

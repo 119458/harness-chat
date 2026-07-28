@@ -2,7 +2,8 @@ import type { Status } from '../../types/chat'
 
 // T032 - header row for the main canvas. Replaces the temporary StatusIndicator.
 // Left: task title. Right: monochrome breathing status light whose color and
-// animation reflect the current agent status.
+// animation reflect the current agent status. The status word stays on the 10px
+// micro tier (constitution V: status/progress badges) per decision 3.
 export default function CanvasHeader({
   status,
   title,
@@ -12,19 +13,19 @@ export default function CanvasHeader({
 }) {
   const dotClass =
     status === 'RUNNING'
-      ? 'bg-zinc-300 animate-pulse'
+      ? 'bg-fg animate-pulse'
       : status === 'ERROR'
         ? 'bg-red-500 animate-pulse'
-        : 'bg-zinc-600'
+        : 'bg-fg-faint'
 
   return (
-    <header className="flex items-center justify-between px-4 h-12 border-b border-white/5 bg-canvas/80 backdrop-blur sticky top-0 z-10">
-      <span className="text-control text-zinc-200 font-medium tracking-wider truncate">
+    <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-hairline bg-canvas/80 px-4 backdrop-blur">
+      <span className="truncate text-control font-medium tracking-wider text-fg">
         {title}
       </span>
       <div className="flex items-center gap-2">
         <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
-        <span className="text-micro uppercase tracking-wider text-zinc-500">
+        <span className="text-micro uppercase tracking-wider text-fg-subtle">
           {status}
         </span>
       </div>

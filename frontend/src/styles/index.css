@@ -9,8 +9,41 @@
     height: 100%;
   }
 
+  /*
+   * Semantic color tokens (constitution Principle V). Light values are the
+   * constitution's light set (canvas #fafafa, surface #f4f4f5, border black/5);
+   * dark values are the Zinc dark set (canvas #09090b, surface #18181b, border
+   * white/5). The four foreground tiers invert symmetrically (dark:
+   * zinc-200/400/500/600, light: zinc-800/600/500/400) so the contrast ordering
+   * is preserved across themes. Default theme is dark; index.html sets the
+   * `dark` class on <html> before paint.
+   */
+  :root {
+    --canvas-rgb: 250 250 250; /* zinc-50  #fafafa */
+    --surface-rgb: 244 244 245; /* zinc-100 #f4f4f5 */
+    --hairline: rgba(0, 0, 0, 0.05);
+    --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+
+    --fg-rgb: 39 39 42; /* zinc-800 #27272a */
+    --fg-muted-rgb: 82 82 91; /* zinc-600 #52525b */
+    --fg-subtle-rgb: 113 113 122; /* zinc-500 #71717a */
+    --fg-faint-rgb: 161 161 170; /* zinc-400 #a1a1aa */
+  }
+
+  .dark {
+    --canvas-rgb: 9 9 11; /* #09090b */
+    --surface-rgb: 24 24 27; /* #18181b */
+    --hairline: rgba(255, 255, 255, 0.05);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+
+    --fg-rgb: 228 228 231; /* zinc-200 #e4e4e7 */
+    --fg-muted-rgb: 161 161 170; /* zinc-400 #a1a1aa */
+    --fg-subtle-rgb: 113 113 122; /* zinc-500 #71717a */
+    --fg-faint-rgb: 82 82 91; /* zinc-600 #52525b */
+  }
+
   body {
-    @apply bg-canvas text-zinc-300 antialiased;
+    @apply bg-canvas text-fg antialiased;
     font-feature-settings: 'cv11', 'ss01';
     letter-spacing: 0.05em;
   }
@@ -19,10 +52,11 @@
 /*
  * 4px slim scrollbar utility (FR-017, SC-006).
  * Applied only where content can overflow (e.g. RECENT TASKS, long blocks).
+ * Thumb color flips with the theme via --scrollbar-thumb.
  */
 .slim-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .slim-scrollbar::-webkit-scrollbar {
@@ -35,6 +69,23 @@
 }
 
 .slim-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: var(--scrollbar-thumb);
   border-radius: 9999px;
+}
+
+/*
+ * Thinking placeholder breathing animation (constitution Principle V: reuses
+ * the Thinking Process capsule shell, no new component). Opacity 40% -> 100%
+ * -> 40% over ~1.2s, applied to the "思考中" label shown before the first
+ * thinking_delta arrives. The capsule border/background stay at full opacity
+ * (only the icon + label breathe) so the container never visually disappears.
+ */
+@keyframes thinking-breath {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
 }
