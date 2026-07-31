@@ -3,7 +3,9 @@ import random
 import time
 
 PRIMARY_MODEL = os.environ["MODEL"]
-FALLBACK_MODEL = os.getenv("MODEL")
+# 002-loop-robustness R5/FR-005: fallback model is a SEPARATE env var, not MODEL.
+# Unset -> degrade path retries to exhaustion then retry_exhausted (clarify Q1).
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL")
 ESCALATED_MAX_TOKENS = 64000
 DEFAULT_MAX_TOKENS = 8000
 MAX_RECOVERY_RETRIES = 3
@@ -11,6 +13,37 @@ MAX_RETRIES = 10
 BASE_DELAY_MS = 500
 MAX_CONSECUTIVE_529 = 3
 CONTINUATION_PROMPT = "输出已达token上限，直接继续执行,无需道歉，无需重述前文，从中断处接续。"
+
+# 002-loop-robustness bounded-termination constants (R2; spec FR-002/FR-003).
+# Module-level constants, NOT .env config items (clarify Q3/Q5).
+MAX_TURNS = 50
+MAX_FORCED_CONTINUES = 3
+
+
+class ExitReason:
+    """Enumerated task-exit reasons (R3; spec FR-004 / data-model E1).
+
+    String constants (no enum dependency) - these values also pin the wire
+    values of SSE ``error.reason`` (contracts/api-contract-extension.md).
+    Mapping: ``normal_completion`` -> ``done``; ``user_aborted`` -> ``stopped``
+    (001 existing); the other three ride ``error`` + ``reason`` (data-model E3).
+    """
+
+    normal_completion = "normal_completion"
+    retry_exhausted = "retry_exhausted"
+    turn_limit_reached = "turn_limit_reached"
+    stop_hook_protection_triggered = "stop_hook_protection_triggered"
+    user_aborted = "user_aborted"
+
+
+class RetryExhaustedError(Exception):
+    """429/529 retries exhausted (with_retry hit MAX_RETRIES) - R6 / data-model E4.
+
+    Raised (not returned) so ``loop/loop.py`` can catch it and emit a clean
+    ``error`` + ``reason=retry_exhausted`` terminal event, replacing the old
+    path that returned a ``RuntimeError`` and crashed the stream iterator.
+    """
+
 
 class RecoveryState:
 
@@ -20,6 +53,11 @@ class RecoveryState:
         self.consecutive_529 = 0
         self.has_attempted_reactive_compact = False
         self.current_model = PRIMARY_MODEL
+        # 002-loop-robustness bounded-termination counters (R2/R8; data-model E2).
+        # Per-task cumulative; reset only on a new RecoveryState (new task), NOT
+        # on tool_use turns (R8: resetting would let a rogue Stop hook never trip).
+        self.turn_count = 0
+        self.forced_continue_count = 0
 
 
 def retry_delay(attempt, retry_after=None):
@@ -70,7 +108,11 @@ def with_retry(fn, state: RecoveryState):
 
             raise
 
-    return RuntimeError(f"Max retries ({MAX_RETRIES}) exceeded")
+    # 002-loop-robustness US2 (R6, data-model E4): raise (don't return) so
+    # loop/loop.py can catch RetryExhaustedError and emit a clean
+    # error+retry_exhausted terminal event. Returning a RuntimeError here used
+    # to crash the stream iterator -> bridge generic fallback.
+    raise RetryExhaustedError(f"Max retries ({MAX_RETRIES}) exceeded")
 
 def is_prompt_too_long_error(e: Exception) -> bool:
 

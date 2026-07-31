@@ -31,6 +31,10 @@ export interface Done {
 export interface ErrorEvent {
   type: 'error'
   message: string
+  // 002-loop-robustness (Principle VII; data-model E3.1): optional exit reason.
+  // 'retry_exhausted' | 'turn_limit_reached' | 'stop_hook_protection_triggered'
+  // Absent = unclassified error (backwards-compatible with 001).
+  reason?: string
 }
 
 export interface Stopped {

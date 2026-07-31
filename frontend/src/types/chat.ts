@@ -29,6 +29,9 @@ export interface ErrorBlockData {
   block_id: string
   kind: 'error'
   content: string
+  // 002-loop-robustness US3: exit reason for semantic copy in ErrorBlock
+  // (contracts/api-contract-extension.md). Absent = unclassified (001 behavior).
+  reason?: string
 }
 
 export type Block = ThinkingBlockData | ToolBlockData | AnswerBlockData | ErrorBlockData

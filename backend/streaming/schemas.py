@@ -41,6 +41,10 @@ class Done(BaseModel):
 class Error(BaseModel):
     type: Literal["error"] = "error"
     message: str
+    # 002-loop-robustness (Principle VII; data-model E3.1): optional exit reason.
+    # Values: retry_exhausted | turn_limit_reached | stop_hook_protection_triggered.
+    # None/absent = unclassified error (backwards-compatible with 001).
+    reason: str | None = None
 
 
 class Stopped(BaseModel):

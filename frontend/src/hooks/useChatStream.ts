@@ -138,7 +138,7 @@ export function useChatStream(): UseChatStream {
 
   /** Terminal event: finalize the current turn + drive status (FR-011..014). */
   const finalizeCurrentTurn = useCallback(
-    (kind: 'done' | 'error' | 'stopped', message?: string) => {
+    (kind: 'done' | 'error' | 'stopped', message?: string, reason?: string) => {
       setTurns((prev) => {
         if (prev.length === 0) return prev
         const last = prev[prev.length - 1]
@@ -150,13 +150,16 @@ export function useChatStream(): UseChatStream {
         }
         if (kind === 'error') {
           // carry the error message as a dedicated error block so it renders as
-          // a distinct error card (point 4), not bare answer text.
+          // a distinct error card (point 4), not bare answer text. 002-loop
+          // robustness: also carry `reason` for semantic copy (ErrorBlock).
           finalized.blocks = [
             ...finalized.blocks,
             {
               block_id: crypto.randomUUID(),
               kind: 'error',
               content: message ?? 'Unknown error',
+              // null/absent reason from the wire -> undefined (01 back-compat).
+              reason: reason || undefined,
             },
           ]
         }
@@ -191,10 +194,11 @@ export function useChatStream(): UseChatStream {
       const guardedFinalize = (
         kind: 'done' | 'error' | 'stopped',
         message?: string,
+        reason?: string,
       ) => {
         if (!isCurrent() || terminalRef.current) return
         terminalRef.current = true
-        finalizeCurrentTurn(kind, message)
+        finalizeCurrentTurn(kind, message, reason)
       }
 
       fetchEventSource('/api/chat', {
@@ -232,6 +236,7 @@ export function useChatStream(): UseChatStream {
             guardedFinalize(
               parsed.type,
               parsed.type === 'error' ? parsed.message : undefined,
+              parsed.type === 'error' ? parsed.reason : undefined,
             )
           } else {
             applyToCurrentTurn(parsed)
